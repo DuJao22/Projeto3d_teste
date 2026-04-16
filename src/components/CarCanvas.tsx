@@ -16,6 +16,8 @@ const CarCanvas = forwardRef<CarCanvasHandle>((_, ref) => {
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const scrollProgressRef = useRef(0);
 
+  const doorLeftRef = useRef<THREE.Object3D | null>(null);
+
   useImperativeHandle(ref, () => ({
     updateCar: (progress: number) => {
       scrollProgressRef.current = progress;
@@ -23,7 +25,12 @@ const CarCanvas = forwardRef<CarCanvasHandle>((_, ref) => {
 
       const isMobile = window.innerWidth < 768;
       const xOffset = isMobile ? 0.8 : 1.5;
-      const doorLeft = carRef.current.getObjectByName('door_left_ok');
+      
+      // Cache door reference if not already cached
+      if (!doorLeftRef.current) {
+        doorLeftRef.current = carRef.current.getObjectByName('door_left_ok') || null;
+      }
+      const doorLeft = doorLeftRef.current;
 
       // Reset camera rotations for base states
       if (progress < 0.4 || progress >= 0.8) {
@@ -95,6 +102,8 @@ const CarCanvas = forwardRef<CarCanvasHandle>((_, ref) => {
     let renderer: THREE.WebGLRenderer | null = null;
     const clock = new THREE.Clock();
 
+    const wheels: THREE.Object3D[] = [];
+
     try {
       const scene = new THREE.Scene();
       sceneRef.current = scene;
@@ -104,15 +113,17 @@ const CarCanvas = forwardRef<CarCanvasHandle>((_, ref) => {
       cameraRef.current = camera;
 
       renderer = new THREE.WebGLRenderer({ 
-        antialias: true, 
+        antialias: window.devicePixelRatio < 2,
         alpha: true,
         powerPreference: 'high-performance',
+        precision: 'mediump',
         stencil: false,
         depth: true,
+        // Disable logarithmicDepthBuffer for better performance
       });
       
       renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2)); // Even more aggressive cap
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.5;
       renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -127,30 +138,30 @@ const CarCanvas = forwardRef<CarCanvasHandle>((_, ref) => {
       });
 
       // Lighting
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
       scene.add(ambientLight);
 
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
       directionalLight.position.set(5, 5, 5);
       scene.add(directionalLight);
 
-      // Neon accents
-      const pointLight = new THREE.PointLight(0x00f2ff, 15, 20);
+      // Neon accents - reduced intensity for performance
+      const pointLight = new THREE.PointLight(0x00f2ff, 10, 15);
       pointLight.position.set(-3, 2, 2);
       scene.add(pointLight);
 
-      const blueLight = new THREE.PointLight(0x00E5FF, 10, 20);
+      const blueLight = new THREE.PointLight(0x00E5FF, 8, 15);
       blueLight.position.set(3, -1, 2);
       scene.add(blueLight);
 
-      // Ground Reflection / Shadow
-      const groundGeo = new THREE.CircleGeometry(10, 32);
+      // Ground Reflection / Shadow - simplified
+      const groundGeo = new THREE.PlaneGeometry(20, 20);
       const groundMat = new THREE.MeshStandardMaterial({ 
         color: 0x000000, 
-        roughness: 0.1, 
-        metalness: 0.5,
+        roughness: 0.2, 
+        metalness: 0,
         transparent: true,
-        opacity: 0.4
+        opacity: 0.3
       });
       const ground = new THREE.Mesh(groundGeo, groundMat);
       ground.rotation.x = -Math.PI / 2;
@@ -184,6 +195,9 @@ const CarCanvas = forwardRef<CarCanvasHandle>((_, ref) => {
                 material.envMapIntensity = 2;
               }
             }
+            if (child.name.includes('wheel')) {
+              wheels.push(child);
+            }
           });
 
           scene.add(car);
@@ -214,24 +228,21 @@ const CarCanvas = forwardRef<CarCanvasHandle>((_, ref) => {
         if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return;
         animationFrameId = requestAnimationFrame(animate);
         
+        // Skip rendering if tab is hidden
+        if (document.hidden) return;
+
         const elapsedTime = clock.getElapsedTime();
 
         // Idle animation: slight floating and rotation
         if (carRef.current) {
-          // Only apply idle animation when not in the middle of a heavy scroll transition
-          // or apply it subtly on top of scroll
-          const idleRotation = Math.sin(elapsedTime * 0.5) * 0.02;
           const idleFloat = Math.sin(elapsedTime * 1.5) * 0.03;
-          
           carRef.current.position.y = (isMobile ? -0.3 : -0.5) + idleFloat;
-          carRef.current.rotation.z = idleRotation * 0.5;
+          carRef.current.rotation.z = Math.sin(elapsedTime * 0.5) * 0.01;
           
-          // Add a bit of "life" to the wheels if they exist
-          carRef.current.traverse((child) => {
-            if (child.name.includes('wheel')) {
-              child.rotation.x += 0.01;
-            }
-          });
+          // Optimized wheel rotation
+          for (let i = 0; i < wheels.length; i++) {
+            wheels[i].rotation.x += 0.01;
+          }
         }
 
         rendererRef.current.render(sceneRef.current, cameraRef.current);
